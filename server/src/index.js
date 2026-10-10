@@ -8,7 +8,13 @@ import userRoutes from './routes/users.js';
 
 dotenv.config();
 const app = express();
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://hostel-care-khaki.vercel.app'
+  ],
+  credentials: true
+}));
 app.use(express.json({ limit: '1mb' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', authRoutes);
