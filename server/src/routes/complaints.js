@@ -1,8 +1,9 @@
-
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import Complaint from '../models/Complaint.js';
 import { protect, allowRoles } from '../middleware/auth.js';
+import { upload, cloudinary, Readable } from '../middleware/upload.js';
+
 
 const router = Router();
 
@@ -39,41 +40,84 @@ router.get('/', async (req, res, next) => {
 });
 
 // Students can submit complaints only for their own assigned hostel.
-router.post('/', allowRoles('student'), async (req, res, next) => {
-  try {
-    const { title, category, description, room } = req.body;
 
-    if (!title?.trim() || !description?.trim()) {
-      return res.status(400).json({
-        message: 'Title and description are required.'
+router.post(
+  '/',
+  allowRoles('student'),
+  upload.single('evidence'),
+  async (req, res, next) => {
+    let uploadedPublicId;
+
+    try {
+      const { title, category, description, room } = req.body;
+
+      if (!title?.trim() || !description?.trim()) {
+        return res.status(400).json({
+          message: 'Title and description are required.'
+        });
+      }
+
+      if (!req.user.hostel?.trim()) {
+        return res.status(400).json({
+          message: 'No hostel is assigned to your account. Contact the administrator.'
+        });
+      }
+
+      let evidenceUrl = '';
+      let evidencePublicId = '';
+
+      if (req.file) {
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            {
+              folder: 'hostelcare/complaints',
+              resource_type: 'image'
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+
+          Readable.from(req.file.buffer).pipe(stream);
+        });
+
+        evidenceUrl = result.secure_url;
+        evidencePublicId = result.public_id;
+        uploadedPublicId = result.public_id;
+      }
+
+      const complaint = await Complaint.create({
+        title: title.trim(),
+        category,
+        description: description.trim(),
+        hostel: req.user.hostel.trim(),
+        room,
+        student: req.user._id,
+        evidenceUrl,
+        evidencePublicId
       });
+
+      const populated = await complaint.populate(
+        'student',
+        'name email hostel'
+      );
+
+      res.status(201).json({ complaint: populated });
+    } catch (e) {
+      if (uploadedPublicId) {
+        try {
+          await cloudinary.uploader.destroy(uploadedPublicId);
+        } catch (cleanupError) {
+          console.error('Failed to clean up uploaded evidence:', cleanupError);
+        }
+      }
+
+      next(e);
     }
-
-    if (!req.user.hostel?.trim()) {
-      return res.status(400).json({
-        message: 'No hostel is assigned to your account. Contact the administrator.'
-      });
-    }
-
-    const complaint = await Complaint.create({
-      title: title.trim(),
-      category,
-      description: description.trim(),
-      hostel: req.user.hostel.trim(),
-      room,
-      student: req.user._id
-    });
-
-    const populated = await complaint.populate(
-      'student',
-      'name email hostel'
-    );
-
-    res.status(201).json({ complaint: populated });
-  } catch (e) {
-    next(e);
   }
-});
+);
+
 
 // Rectors can update complaints from their own hostel.
 // Admins can update complaints across all hostels.

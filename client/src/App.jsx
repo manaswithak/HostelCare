@@ -7,15 +7,30 @@ const categories = ['Maintenance', 'Cleanliness', 'Water', 'Electricity', 'Food'
 const statuses = ['Submitted', 'In Progress', 'Resolved', 'Rejected'];
 const date = value => value ? new Date(value).toLocaleString() : '—';
 
+
 async function request(path, token, options = {}) {
+  const isFormData = options.body instanceof FormData;
+
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers || {})
+  };
+
   const res = await fetch(`${API}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) },
+    headers
   });
+
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || 'Something went wrong.');
+
+  if (!res.ok) {
+    throw new Error(data.message || 'Something went wrong.');
+  }
+
   return data;
 }
+
 
 function App() {
   const [session, setSession] = useState(() => {
@@ -25,6 +40,7 @@ function App() {
   const [form, setForm] = useState({ name: '', email: '', password: '', hostel: '' });
   const [complaints, setComplaints] = useState([]);
   const [newComplaint, setNewComplaint] = useState({ title: '', category: 'Maintenance', description: '', hostel: '', room: '' });
+  const [evidence, setEvidence] = useState(null);
   const [rectorForm, setRectorForm] = useState({ name: '', email: '', password: '', hostel: '' });
   const [updates, setUpdates] = useState({});
   const [busy, setBusy] = useState(false);
@@ -68,14 +84,55 @@ function App() {
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
 
-  async function submitComplaint(e) {
-    e.preventDefault(); setBusy(true); setError(''); setNotice('');
-    try {
-      await request('/complaints', session.token, { method: 'POST', body: JSON.stringify(newComplaint) });
-      setNewComplaint({ title: '', category: 'Maintenance', description: '', hostel: '', room: '' });
-      await loadComplaints(session); setNotice('Complaint submitted successfully.');
-    } catch (e) { setError(e.message); } finally { setBusy(false); }
+ 
+async function submitComplaint(e) {
+  e.preventDefault();
+  setBusy(true);
+  setError('');
+  setNotice('');
+
+  try {
+  if (evidence && evidence.size > 5 * 1024 * 1024) {
+  setError('Image must be 5 MB or smaller.');
+  setBusy(false);
+  return;
+}
+  const formData = new FormData();
+
+    formData.append('title', newComplaint.title);
+    formData.append('category', newComplaint.category);
+    formData.append('description', newComplaint.description);
+    formData.append('room', newComplaint.room);
+
+    if (evidence) {
+      formData.append('evidence', evidence);
+    }
+
+    await request('/complaints', session.token, {
+      method: 'POST',
+      body: formData,
+      headers: {}
+    });
+
+    setNewComplaint({
+      title: '',
+      category: 'Maintenance',
+      description: '',
+      hostel: '',
+      room: ''
+    });
+    setEvidence(null);
+    e.target.reset();
+
+    await loadComplaints(session);
+    setNotice('Complaint submitted successfully.');
+  } catch (e) {
+    setError(e.message);
+  } finally {
+    setBusy(false);
   }
+}
+
 
   async function saveUpdate(id) {
     const value = updates[id] || {};
@@ -150,6 +207,16 @@ function App() {
             <label>Hostel / block<input value={newComplaint.hostel} onChange={e=>setNewComplaint({...newComplaint,hostel:e.target.value})} placeholder={user.hostel||'Hostel name or block'}/></label>
             <label>Room number <span className="optional">(optional)</span><input value={newComplaint.room} onChange={e=>setNewComplaint({...newComplaint,room:e.target.value})} placeholder="e.g. A-204"/></label>
             <label className="wide">Description<textarea required maxLength={3000} rows="3" value={newComplaint.description} onChange={e=>setNewComplaint({...newComplaint,description:e.target.value})} placeholder="Describe the issue, when it started, and where it occurs…"/></label>
+            <label className="wide">Evidence photo (optional)
+  <input
+    type="file"
+    accept="image/*"
+    onChange={e => setEvidence(e.target.files?.[0] || null)}
+  />
+  <span className="muted tiny">
+    Upload a photo of the issue. Maximum size: 5 MB.
+  </span>
+</label>
             <div className="form-actions"><span className="muted tiny">Your report will be visible to hostel staff.</span><button className="btn primary" disabled={busy}>Submit complaint <ArrowRight size={16}/></button></div>
           </form>
         </section>}
@@ -169,9 +236,35 @@ function App() {
           {visibleComplaints.length===0 ? <div className="empty"><div className="empty-icon"><ClipboardList size={25}/></div><strong>No complaints found</strong><p>{filter==='All'?'New complaints will appear here once submitted.':`There are no complaints with status “${filter}”.`}</p></div> :
             <div className="complaint-list">{visibleComplaints.map(c=>{
               const edit = updates[c._id] || { status:c.status, resolutionNote:c.resolutionNote || '' };
-              return <article className="complaint-item" key={c._id}>
+              return <article
+  className={`complaint-item ${c.evidenceUrl ? 'has-evidence' : ''}`}
+  key={c._id}
+>
+                <div className="complaint-content">
                 <div className="complaint-top"><div className="complaint-title-wrap"><span className="category-tag">{c.category}</span><h4>{c.title}</h4><span className="complaint-meta">#{String(c._id).slice(-6).toUpperCase()} · Submitted {date(c.createdAt)}</span></div><span className={`status status-${c.status.toLowerCase().replaceAll(' ','-')}`}>{c.status}</span></div>
                 <p className="description">{c.description}</p>
+                </div>
+
+{c.evidenceUrl && (
+  <a
+    href={c.evidenceUrl}
+    target="_blank"
+    rel="noreferrer"
+    className="evidence-link"
+  >
+    <img
+      src={c.evidenceUrl}
+      alt="Complaint evidence"
+      style={{
+        maxWidth: '100%',
+        maxHeight: '280px',
+        objectFit: 'contain',
+        borderRadius: '8px',
+        marginTop: '10px'
+      }}
+    />
+  </a>
+)}
                 <div className="detail-chips"><span>Hostel: {c.hostel||'Not specified'}</span>{c.room&&<span>Room: {c.room}</span>}{isStaff&&<span>Student: {c.student?.name||'Unknown'}</span>}</div>
                 {c.status==='Resolved' && <div className="resolution-box"><CheckCircle2 size={18}/><div><strong>Resolution / action taken</strong><p>{c.resolutionNote||'Marked resolved.'}</p><small>{c.resolvedBy?.name?`Updated by ${c.resolvedBy.name} · `:''}{date(c.resolvedAt)}</small></div></div>}
                 {c.status!=='Resolved' && c.resolutionNote && <div className="update-box"><strong>Latest staff update</strong><p>{c.resolutionNote}</p></div>}

@@ -5,6 +5,8 @@ const complaintSchema = new mongoose.Schema({
   description: { type: String, required: true, trim: true, maxlength: 3000 },
   hostel: { type: String, trim: true, default: '' },
   room: { type: String, trim: true, maxlength: 30, default: '' },
+  evidenceUrl: { type: String, default: '' },
+  evidencePublicId: { type: String, default: '' },
   student: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   status: { type: String, enum: ['Submitted', 'In Progress', 'Resolved', 'Rejected'], default: 'Submitted' },
   resolutionNote: { type: String, trim: true, maxlength: 2000, default: '' },
